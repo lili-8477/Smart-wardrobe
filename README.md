@@ -9,12 +9,9 @@ This repository demonstrates how to build a **multi-modal Retrieval-Augmented Ge
 - [Setup and Installation](#setup-and-installation)
 - [Usage](#usage)
   - [Running the Backend (FastAPI)](#running-the-backend-fastapi)
-  - [Rebuilding the FAISS Index](#rebuilding-the-faiss-index)
   - [Running the Frontend (Streamlit)](#running-the-frontend-streamlit)
 - [File Structure](#file-structure)
 - [Customization and Tips](#customization-and-tips)
-- [Troubleshooting](#troubleshooting)
-- [Next Steps](#next-steps)
 - [License](#license)
 
 ---
@@ -36,7 +33,7 @@ This repository demonstrates how to build a **multi-modal Retrieval-Augmented Ge
 ---
 
 ## Tech Stack
-- **Python 3.8+**
+- **Python 3.11+**
 - **[PyTorch](https://pytorch.org/)** (for running the CLIP model)
 - **[Transformers](https://github.com/huggingface/transformers)** (for CLIP)
 - **[FAISS](https://github.com/facebookresearch/faiss)**
@@ -54,6 +51,53 @@ This repository demonstrates how to build a **multi-modal Retrieval-Augmented Ge
    cd multimodal-rag
 
 2. **Create a Virtual Environment (optional but recommended)**
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# On Windows: venv\Scripts\activate
+  ```bash
+    python -m venv venv
+    source venv/bin/activate  # Linux/Mac
+  ```
+## Usage
+### Running the Backend (FastAPI)
+  Start the FastAPI server:
+
+```
+uvicorn main:app --reload
+```
+main:app should point to the location of your FastAPI instance if it’s defined in a file called main.py with app = FastAPI().
+Adjust the --port as needed.
+
+### Running the Frontend (Streamlit)
+Start Streamlit:
+```
+streamlit run app.py
+```
+## File Structure
+Below is an example structure you might have in your project:
+```graphql
+.
+├── main.py                # FastAPI code with endpoints
+├── app.py                 # Streamlit frontend
+├── models/
+│   └── clip_model.py      # CLIP model & helper functions
+├── requirements.txt
+├── comments.json          # JSON with image metadata
+├── images/
+│   ├── item1.jpg
+│   ├── item2.jpg
+│   └── ...
+└── ...
+```
+## Customization and Tips
+Embedding Weights
+In the code, the image and text embeddings are averaged. To bias the search more towards image features or text features, modify the ratio, for example:
+```python
+combined_emb = (0.7 * (image_emb / norm_image) + 0.3 * (text_emb / norm_text))
+```
+Hyperparameters
+  max_distance: Determines how “strict” or “loose” the similarity threshold is.
+  k: Number of top matches to return.
+Deployment
+  You can deploy FastAPI on services like AWS, Azure, or Heroku.
+  Streamlit can also be hosted on Streamlit Cloud or other platforms (e.g., Docker containers).
+
+## License
+This project is licensed under the MIT License. Feel free to modify and distribute it as needed.
