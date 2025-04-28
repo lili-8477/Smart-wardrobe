@@ -292,6 +292,42 @@ async def search_image(
     
     return results
 
+@app.post("/search-by-text")
+async def search_by_text(
+    text: str = Form(...),
+    k: int = Query(3, ge=1, le=50),
+    max_distance: float = Query(0.4, description="Maximum L2 distance threshold")
+) -> List[dict]:
+    """Search for items using text description only"""
+    # Generate text embedding
+    inputs = processor(
+        text=[text],
+        return_tensors="pt",
+        padding=True
+    ).to(device)
+    
+    with torch.no_grad():
+        text_emb = model.get_text_features(**inputs)
+        text_emb = text_emb.cpu().numpy()[0]
+        text_emb = text_emb / np.linalg.norm(text_emb)
+    
+    # Search in FAISS index
+    distances, indices = index.search(np.array([text_emb]), k)
+    
+    # Filter results by distance threshold
+    results = []
+    for dist, idx in zip(distances[0], indices[0]):
+        if dist <= max_distance and idx < len(metadata):
+            item = metadata[idx]
+            results.append({
+                "filename": item["filename"],
+                "comment": item["comment"],
+                "tags": item["tags"],
+                "distance": float(dist)
+            })
+    
+    return results
+
 @app.get("/items")
 async def get_all_items():
     """Get all items with image URLs, comments, and tags"""

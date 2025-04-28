@@ -15,47 +15,80 @@ FASTAPI_URL="http://localhost:8000"
 def search_page():
     st.title("🔍 Find Similar Clothing Items")
 
+    # Add search type selection
+    search_type = st.radio("Search by:", ["Image", "Text"], horizontal=True)
     
-    img_bytes = None
-
-    enable = st.checkbox("Enable camera")
-    img_bytes = st.camera_input("Capture an item to search", 
-                                key="mobile_cam",
-                                label_visibility="collapsed", disabled=not enable)
-
-    
-    comment = st.text_input("Additional search description (optional)", 
-                          placeholder="e.g., 'stripes' or 't-shirt'")
-    
-    if img_bytes and st.button("Search Similar Items"):
-        with st.spinner("Finding similar items..."):
-            try:
-                search_response = requests.post(
-                    f"{FASTAPI_URL}/search",
-                    files={"image": ("query.jpg", img_bytes, "image/jpeg")},
-                    data={"comment": comment}
-                )
-                
-                if search_response.status_code == 200:
-                    results = search_response.json()
-                    if not results:
-                        st.warning("No similar items found")
-                        return
+    if search_type == "Image":
+        img_bytes = None
+        enable = st.checkbox("Enable camera")
+        img_bytes = st.camera_input("Capture an item to search", 
+                                    key="mobile_cam",
+                                    label_visibility="collapsed", disabled=not enable)
+        
+        comment = st.text_input("Additional search description (optional)", 
+                              placeholder="e.g., 'stripes' or 't-shirt'")
+        
+        if img_bytes and st.button("Search Similar Items"):
+            with st.spinner("Finding similar items..."):
+                try:
+                    search_response = requests.post(
+                        f"{FASTAPI_URL}/search",
+                        files={"image": ("query.jpg", img_bytes, "image/jpeg")},
+                        data={"comment": comment}
+                    )
                     
-                    st.subheader("Top Matching Items")
-                    cols = st.columns(3)
-                    for idx, res in enumerate(results[:3]):
-                        with cols[idx % 3]:
-                            st.image(f"{FASTAPI_URL}/images/{res['filename']}")
-                            tags_display = ", ".join(res.get("tags", []))
-                            st.caption(f"💬 {res['comment']} | Tags: {tags_display}")
-                else:
-                    st.error("Search failed. Please try again.")
+                    if search_response.status_code == 200:
+                        results = search_response.json()
+                        if not results:
+                            st.warning("No similar items found")
+                            return
+                        
+                        st.subheader("Top Matching Items")
+                        cols = st.columns(3)
+                        for idx, res in enumerate(results[:3]):
+                            with cols[idx % 3]:
+                                st.image(f"{FASTAPI_URL}/images/{res['filename']}")
+                                tags_display = ", ".join(res.get("tags", []))
+                                st.caption(f"💬 {res['comment']} | Tags: {tags_display}")
+                    else:
+                        st.error("Search failed. Please try again.")
+                        
+                except requests.ConnectionError:
+                    st.error("Could not connect to search server")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    else:  # Text-based search
+        search_text = st.text_input("Describe the item you're looking for", 
+                                  placeholder="e.g., 'red striped t-shirt' or 'blue jeans'")
+        
+        if search_text and st.button("Search by Description"):
+            with st.spinner("Finding matching items..."):
+                try:
+                    search_response = requests.post(
+                        f"{FASTAPI_URL}/search-by-text",
+                        data={"text": search_text}
+                    )
                     
-            except requests.ConnectionError:
-                st.error("Could not connect to search server")
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
+                    if search_response.status_code == 200:
+                        results = search_response.json()
+                        if not results:
+                            st.warning("No matching items found")
+                            return
+                        
+                        st.subheader("Top Matching Items")
+                        cols = st.columns(3)
+                        for idx, res in enumerate(results[:3]):
+                            with cols[idx % 3]:
+                                st.image(f"{FASTAPI_URL}/images/{res['filename']}")
+                                tags_display = ", ".join(res.get("tags", []))
+                                st.caption(f"💬 {res['comment']} | Tags: {tags_display}")
+                    else:
+                        st.error("Search failed. Please try again.")
+                        
+                except requests.ConnectionError:
+                    st.error("Could not connect to search server")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
 
 def upload_page():
     st.title("📤 Add New Items")
