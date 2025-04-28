@@ -11,7 +11,7 @@ load_dotenv()
 
 
 FASTAPI_URL = os.getenv("FASTAPI_URL")
-
+FASTAPI_URL="http://localhost:8000"
 def search_page():
     st.title("🔍 Find Similar Clothing Items")
 
@@ -159,7 +159,7 @@ def browse_page():
             # Image display
             try:
                 st.image(f"{FASTAPI_URL}/images/{item['filename']}", 
-                        use_column_width=True)
+                        use_container_width=True)
             except:
                 st.error("Image not found")
             
@@ -270,7 +270,7 @@ def show_results(items, category):
             try:
                 st.image(
                     f"{FASTAPI_URL}/images/{item['filename']}",
-                    use_column_width=True,
+                    use_container_width=True,
                     caption=item.get('comment', '')
                 )
                 tags_display = ", ".join(item.get('tags', []))
