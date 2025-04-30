@@ -128,23 +128,41 @@ app.mount("/images", StaticFiles(directory=IMAGE_DIR), name="images")
 app.mount("/segments", StaticFiles(directory=SEG_DIR), name="segments")
 
 def process_image_text_pair(image_path: str, text: str):
-    """Process image and text to generate combined embedding"""
+    """Process image and text to generate embeddings"""
     image = Image.open(image_path)
-    inputs = processor(
-        text=[text], 
+    
+    # Process image
+    image_inputs = processor(
         images=image,
-        return_tensors="pt", 
+        return_tensors="pt"
+    ).to(device)
+    
+    # Process text
+    text_inputs = processor(
+        text=[text],
+        return_tensors="pt",
         padding=True
     ).to(device)
     
     with torch.no_grad():
-        features = model(**inputs)
-        image_emb = features.image_embeds.cpu().numpy()[0]
-        text_emb = features.text_embeds.cpu().numpy()[0]
+        # Get image embedding
+        image_emb = model.get_image_features(**image_inputs)
+        image_emb = image_emb.cpu().numpy()[0]
+        image_emb = image_emb / np.linalg.norm(image_emb)
+        
+        # Get text embedding
+        text_emb = model.get_text_features(**text_inputs)
+        text_emb = text_emb.cpu().numpy()[0]
+        text_emb = text_emb / np.linalg.norm(text_emb)
+        
+        # Combined embedding (for image+text search)
+        combined_emb = (image_emb + text_emb) / 2
     
-    combined_emb = (image_emb / np.linalg.norm(image_emb) + 
-                   text_emb / np.linalg.norm(text_emb)) / 2
-    return combined_emb.astype('float32')
+    return {
+        "image_emb": image_emb.astype('float32'),
+        "text_emb": text_emb.astype('float32'),
+        "combined_emb": combined_emb.astype('float32')
+    }
 
 @app.post("/add-item")
 async def add_item(
@@ -175,16 +193,22 @@ async def add_item(
     with open(COMMENTS_FILE, "w") as f:
         json.dump(comments_data, f, indent=2)
     
-    # Generate embedding using combined comment + tags
+    # Generate embeddings using combined comment + tags
     combined_text = f"{comment} {' '.join(tag_list)}"
-    emb = process_image_text_pair(image_path, combined_text)
-    index.add(np.array([emb]))
+    embeddings = process_image_text_pair(image_path, combined_text)
+    
+    # Add to FAISS index
+    index.add(np.array([embeddings["combined_emb"]]))
     
     # Update metadata
     metadata.append({
         "filename": filename,
         "comment": comment,
-        "tags": tag_list
+        "tags": tag_list,
+        "embeddings": {
+            "image": embeddings["image_emb"].tolist(),
+            "text": embeddings["text_emb"].tolist()
+        }
     })
     
     # Persist changes
@@ -194,10 +218,23 @@ async def add_item(
     
     return {"message": "Item added successfully"}
 
+def check_index_state():
+    """Check the current state of the index and metadata"""
+    print("\n=== Index State Check ===")
+    print(f"Number of items in metadata: {len(metadata)}")
+    if len(metadata) > 0:
+        print("\nSample item structure:")
+        sample = metadata[0]
+        print(f"Keys in metadata: {sample.keys()}")
+        if "embeddings" in sample:
+            print(f"Embedding keys: {sample['embeddings'].keys()}")
+    print("======================\n")
 
 @app.post("/rebuild-index")
 async def rebuild_index():
     global index, metadata
+    print("\nStarting index rebuild...")
+    
     # Reset index and metadata
     index = faiss.IndexFlatL2(EMBEDDING_DIM)
     metadata = []
@@ -206,8 +243,7 @@ async def rebuild_index():
         with open(COMMENTS_FILE) as f:
             comments_data = json.load(f)
         
-        embeddings = []
-        new_metadata = []
+        print(f"Found {len(comments_data)} items in comments file")
         
         for filename, data in comments_data.items():
             # Handle legacy string format
@@ -220,26 +256,47 @@ async def rebuild_index():
             
             image_path = os.path.join(IMAGE_DIR, filename)
             if not os.path.exists(image_path):
+                print(f"Warning: Image file not found: {filename}")
                 continue
                 
+            print(f"Processing {filename}...")
             combined_text = f"{comment} {' '.join(tags)}"
-            emb = process_image_text_pair(image_path, combined_text)
-            embeddings.append(emb)
-            new_metadata.append({
-                "filename": filename,
-                "comment": comment,
-                "tags": tags
-            })
+            
+            try:
+                emb_data = process_image_text_pair(image_path, combined_text)
+                
+                # Add to FAISS index
+                index.add(np.array([emb_data["combined_emb"]]))
+                
+                # Update metadata with new structure
+                metadata.append({
+                    "filename": filename,
+                    "comment": comment,
+                    "tags": tags,
+                    "embeddings": {
+                        "image": emb_data["image_emb"].tolist(),
+                        "text": emb_data["text_emb"].tolist()
+                    }
+                })
+                print(f"Successfully processed {filename}")
+            except Exception as e:
+                print(f"Error processing {filename}: {str(e)}")
         
-        if embeddings:
-            index.add(np.vstack(embeddings))
+        if metadata:
+            print(f"\nSaving {len(metadata)} items to index and metadata...")
             faiss.write_index(index, INDEX_PATH)
             with open("metadata.json", "w") as f:
-                json.dump(new_metadata, f, indent=2)
-        metadata = new_metadata
+                json.dump(metadata, f, indent=2)
+            print("Save complete")
+        else:
+            print("No items were processed successfully")
     
+    # Check the state after rebuilding
+    check_index_state()
     return {"message": "Index rebuilt successfully"}
 
+# Add check at startup
+check_index_state()
 
 @app.post("/search")
 async def search_image(
@@ -296,9 +353,12 @@ async def search_image(
 async def search_by_text(
     text: str = Form(...),
     k: int = Query(3, ge=1, le=50),
-    max_distance: float = Query(0.4, description="Maximum L2 distance threshold")
+    max_distance: float = Query(1.0, description="Maximum L2 distance threshold")
 ) -> List[dict]:
     """Search for items using text description only"""
+    print(f"Searching for text: {text}")
+    print(f"Number of items in metadata: {len(metadata)}")
+    
     # Generate text embedding
     inputs = processor(
         text=[text],
@@ -311,22 +371,29 @@ async def search_by_text(
         text_emb = text_emb.cpu().numpy()[0]
         text_emb = text_emb / np.linalg.norm(text_emb)
     
-    # Search in FAISS index
-    distances, indices = index.search(np.array([text_emb]), k)
+    print("Generated text embedding shape:", text_emb.shape)
     
-    # Filter results by distance threshold
+    # Search in metadata using text embeddings
     results = []
-    for dist, idx in zip(distances[0], indices[0]):
-        if dist <= max_distance and idx < len(metadata):
-            item = metadata[idx]
-            results.append({
-                "filename": item["filename"],
-                "comment": item["comment"],
-                "tags": item["tags"],
-                "distance": float(dist)
-            })
+    for item in metadata:
+        if "embeddings" in item and "text" in item["embeddings"]:
+            stored_text_emb = np.array(item["embeddings"]["text"])
+            distance = np.linalg.norm(text_emb - stored_text_emb)
+            print(f"Item {item['filename']} distance: {distance}")
+            if distance <= max_distance:
+                results.append({
+                    "filename": item["filename"],
+                    "comment": item["comment"],
+                    "tags": item["tags"],
+                    "distance": float(distance),
+                    "similarity": float(1 - distance)
+                })
     
-    return results
+    print(f"Found {len(results)} results")
+    
+    # Sort by distance (ascending) and return top k
+    results.sort(key=lambda x: x["distance"])
+    return results[:k]
 
 @app.get("/items")
 async def get_all_items():

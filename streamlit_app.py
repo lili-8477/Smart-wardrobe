@@ -61,12 +61,20 @@ def search_page():
         search_text = st.text_input("Describe the item you're looking for", 
                                   placeholder="e.g., 'red striped t-shirt' or 'blue jeans'")
         
+        # Add distance threshold slider
+        max_distance = st.slider("Similarity Threshold", 
+                               min_value=0.0, 
+                               max_value=1.0, 
+                               value=0.7,  # Default to 0.7
+                               step=0.1,
+                               help="Higher values will show more matches, but they might be less relevant")
+        
         if search_text and st.button("Search by Description"):
             with st.spinner("Finding matching items..."):
                 try:
                     search_response = requests.post(
                         f"{FASTAPI_URL}/search-by-text",
-                        data={"text": search_text}
+                        data={"text": search_text, "max_distance": 1.0 - max_distance}  # Convert similarity to distance
                     )
                     
                     if search_response.status_code == 200:
@@ -81,7 +89,10 @@ def search_page():
                             with cols[idx % 3]:
                                 st.image(f"{FASTAPI_URL}/images/{res['filename']}")
                                 tags_display = ", ".join(res.get("tags", []))
+                                similarity = res.get("similarity", 0) * 100
                                 st.caption(f"💬 {res['comment']} | Tags: {tags_display}")
+                                st.progress(similarity / 100)
+                                st.caption(f"Similarity: {similarity:.1f}%")
                     else:
                         st.error("Search failed. Please try again.")
                         
